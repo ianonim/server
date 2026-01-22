@@ -1,21 +1,49 @@
+import logging
+import time
 import telebot
 from telebot import types
+from funpay_api import FunPayAPI
+from telegram import Bot
 
-# Ваш токен от BotFather
-TOKEN = '7973595298:AAH1CKjhtrlSjSZx-5jNNVGfJK3qRZlpCtU'
+# --- НАСТРОЙКИ ---
 
+# Telegram-бот (из первого кода)
+TOKEN_TELEGRAM_BOT = '7973595298:AAH1CKjhtrlSjSZx-5jNNVGfJK3qRZlpCtU'
+LOG_CHAT_ID = -1003608057275  # чат для логов команд бота
 
-# ID чата, куда отправлять логи (группа/канал)
-LOG_CHAT_ID = -1003608057275  # ← замените на ID вашего чата/канала
+# FunPay API (из второго кода)
+FUNPAY_GOLDEN_KEY = "684riu7m6k7ieudx9k7b0xwynnxg7721"
+TELEGRAM_TOKEN_FUNPAY = "8528567225:AAFsRElts8mqoheH89GmMDahZm4o2XVCuhk"
+TELEGRAM_CHAT_ID_FUNPAY = "-1003601117936"  # чат для уведомлений FunPay
 
+# Логгирование
+LOG_FILE = "bot.log"
 
-# Инициализация бота
-bot = telebot.TeleBot(TOKEN)
+# --- ИНИЦИАЛИЗАЦИЯ ---
 
+# Telegram-бот
+bot = telebot.TeleBot(TOKEN_TELEGRAM_BOT)
 
-# Словарь для хранения данных активных участников
+# FunPay API
+fp = FunPayAPI(golden_key=FUNPAY_GOLDEN_KEY)
+tg_bot_funpay = Bot(token=TELEGRAM_TOKEN_FUNPAY)
+
+# Словарь для активных участников (как в первом коде)
 active_users = {}
 
+# --- ЛОГГИНГ ---
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)s | %(message)s",
+    handlers=[
+        logging.FileHandler(LOG_FILE, encoding="utf-8"),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
+
+# --- ФУНКЦИИ TELEGRAM-БОТА (из первого кода) ---
 
 def get_user_identifier(user):
     """Формирует читаемый идентификатор: @username или Имя Фамилия"""
@@ -44,8 +72,7 @@ def send_log_to_chat(message, command, response_text):
     try:
         bot.send_message(LOG_CHAT_ID, log_msg, parse_mode='Markdown')
     except Exception as e:
-        print(f"[ОШИБКА] Не удалось отправить лог: {e}")
-
+        logger.error(f"[ОШИБКА] Не удалось отправить лог: {e}")
 
 @bot.message_handler(commands=['start'])
 def start(message):
@@ -53,13 +80,11 @@ def start(message):
     bot.send_message(message.chat.id, response)
     send_log_to_chat(message, 'start', response)
 
-
 @bot.message_handler(commands=['help'])
 def help(message):
     response = 'Используйте команды: /start — начало, /help — помощь.'
     bot.send_message(message.chat.id, response)
     send_log_to_chat(message, 'help', response)
-
 
 @bot.message_handler(commands=['ping'])
 def ping(message):
@@ -67,13 +92,11 @@ def ping(message):
     bot.send_message(message.chat.id, response)
     send_log_to_chat(message, 'ping', response)
 
-
 @bot.message_handler(commands=['owner'])
 def owner(message):
     response = 'Создатель бота: @I_am_Ripped'
     bot.send_message(message.chat.id, response)
     send_log_to_chat(message, 'owner', response)
-
 
 @bot.message_handler(commands=['admins'])
 def list_admins(message):
@@ -91,10 +114,8 @@ def list_admins(message):
             response = "❌ В чате нет администраторов."
     except Exception as e:
         response = f"❌ Ошибка при получении списка админов: {e}"
-    
     bot.reply_to(message, response)
     send_log_to_chat(message, 'admins', response)
-
 
 @bot.message_handler(commands=['members'])
 def list_members(message):
@@ -128,7 +149,6 @@ def count_members(message):
     bot.reply_to(message, response)
     send_log_to_chat(message, 'count', response)
 
-
 @bot.message_handler(func=lambda msg: True)
 def record_user(message):
     chat_id = message.chat.id
@@ -141,7 +161,76 @@ def record_user(message):
         'username': message.from_user.username
     }
 
-if __name__ == '__main__':
-    print("Бот запущен. Логи отправляются в чат ID:", LOG_CHAT_ID)
-    bot.infinity_polling()
+# --- ФУНКЦИИ FUNPAY (из второго кода) ---
+
+def send_telegram_notification(message):
+    """Отправляет уведомление в Telegram."""
+    try:
+        tg_bot_funpay.send_message(chat_id=TELEGRAM_CHAT_ID_FUNPAY, text=message)
+    except Exception as e:
+        logger.error(f"Не удалось отправить уведомление в Telegram: {e}")
+
+def raise_all_lots():
+    """Поднимает все активные лоты."""
+    try:
+        lots = fp.get_lots()
+        raised_count = 0
+        for lot in lots:
+            if lot["status"] == "active":
+                fp.raise_lot(lot["id"])
+                logger.info(f"Поднят лот: #{lot['id']} ({lot['title']})")
+                raised_count += 1
+        if raised_count > 0:
+            send_telegram_notification(f"Поднято лотов: {raised_count}")
+    except Exception as e:
+        logger.error(f"Ошибка при поднятии лотов: {e}")
+
+
+def check_messages():
+    """Проверяет новые сообщения и отправляет их в Telegram."""
+    try:
+        messages = fp.get_messages()
+        for msg in messages:
+            if msg["new"]:  # если сообщение новое
+                text = msg["message"]
+                sender = msg["sender_name"]
+                order_id = msg.get("order_id", "без заказа")
+                notification = (
+                    f"Новое сообщение от {sender}\n"
+                    f"Заказ: #{order_id}\n"
+                    f"Текст: {text}"
+                )
+                send_telegram_notification(notification)
+                logger.info(f"Отправлено уведомление о сообщении от {sender}")
+    except Exception as e:
+        logger.error(f"Ошибка при проверке сообщений: {e}")
+
+# --- ОСНОВНОЙ ЦИКЛ ---
+
+def main():
+    logger.info("Бот запущен.")
+    send_telegram_notification("Бот стартовал.")
+
+    # Запуск Telegram-бота в отдельном потоке
+    import threading
+    tg_thread = threading.Thread(target=bot.infinity_polling, daemon=True)
+    tg_thread.start()
+
+    # Основной цикл для FunPay
+    while True:
+        try:
+            # Поднимаем лоты
+            raise_all_lots()
+
+            # Проверяем сообщения
+            check_messages()
+
+            time.sleep(30)  # Цикл каждые 30 секунд
+
+        except Exception as e:
+            logger.error(f"Критическая ошибка в основном цикле: {e}")
+            time.sleep(60)
+
+if __name__ == "__main__":
+    main()
 
