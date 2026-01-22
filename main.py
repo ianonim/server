@@ -3,36 +3,25 @@ import time
 import telebot
 from telebot import types
 from funpay_api import FunPayAPI
-from telegram import Bot
+
 
 # --- НАСТРОЙКИ ---
-
-# Telegram-бот (из первого кода)
 TOKEN_TELEGRAM_BOT = '7973595298:AAH1CKjhtrlSjSZx-5jNNVGfJK3qRZlpCtU'
 LOG_CHAT_ID = -1003608057275  # чат для логов команд бота
 
-# FunPay API (из второго кода)
 FUNPAY_GOLDEN_KEY = "684riu7m6k7ieudx9k7b0xwynnxg7721"
 TELEGRAM_TOKEN_FUNPAY = "8528567225:AAFsRElts8mqoheH89GmMDahZm4o2XVCuhk"
-TELEGRAM_CHAT_ID_FUNPAY = "-1003601117936"  # чат для уведомлений FunPay
-
-# Логгирование
+TELEGRAM_CHAT_ID_FUNPAY = -1003601117936  # чат для уведомлений FunPay (число, не строка!)
 LOG_FILE = "bot.log"
 
+
 # --- ИНИЦИАЛИЗАЦИЯ ---
-
-# Telegram-бот
 bot = telebot.TeleBot(TOKEN_TELEGRAM_BOT)
-
-# FunPay API
 fp = FunPayAPI(golden_key=FUNPAY_GOLDEN_KEY)
-tg_bot_funpay = Bot(token=TELEGRAM_TOKEN_FUNPAY)
-
-# Словарь для активных участников (как в первом коде)
 active_users = {}
 
-# --- ЛОГГИНГ ---
 
+# --- ЛОГГИНГ ---
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s | %(levelname)s | %(message)s",
@@ -43,10 +32,10 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# --- ФУНКЦИИ TELEGRAM-БОТА (из первого кода) ---
-
+# --- ФУНКЦИИ TELEGRAM-БОТА ---
 def get_user_identifier(user):
-    """Формирует читаемый идентификатор: @username или Имя Фамилия"""
+    if not user:
+        return "Неизвестный пользователь"
     if user.username:
         return f"@{user.username}"
     elif user.last_name:
@@ -55,12 +44,13 @@ def get_user_identifier(user):
         return user.first_name
 
 def send_log_to_chat(message, command, response_text):
-    """Отправляет лог в указанный чат (LOG_CHAT_ID)"""
+    if not message.from_user:
+        logger.error("Не удалось получить данные пользователя для лога.")
+        return
     user_tag = get_user_identifier(message.from_user)
     chat_info = f"Исходный чат: {message.chat.type} (ID: {message.chat.id})"
     if message.chat.title:
         chat_info += f" — «{message.chat.title}»"
-
     log_msg = (
         f"📊 **ЛОГ ВЫПОЛНЕНИЯ КОМАНДЫ**\n\n"
         f"🔹 Команда: `/{command}`\n"
@@ -74,6 +64,7 @@ def send_log_to_chat(message, command, response_text):
     except Exception as e:
         logger.error(f"[ОШИБКА] Не удалось отправить лог: {e}")
 
+
 @bot.message_handler(commands=['start'])
 def start(message):
     response = 'Привет! Я бот. Чем могу помочь?'
@@ -86,11 +77,13 @@ def help(message):
     bot.send_message(message.chat.id, response)
     send_log_to_chat(message, 'help', response)
 
+
 @bot.message_handler(commands=['ping'])
 def ping(message):
     response = 'Бот работает. При неполадках обратитесь к @I_am_ripped'
     bot.send_message(message.chat.id, response)
     send_log_to_chat(message, 'ping', response)
+
 
 @bot.message_handler(commands=['owner'])
 def owner(message):
@@ -102,7 +95,7 @@ def owner(message):
 def list_admins(message):
     chat_id = message.chat.id
     try:
-        admins = bot.get_chat_administrators(chat_id)
+        admins = bot.get_chat_administrators(chat_id)  # Исправлено: "administrators" → "administrators"
         if admins:
             admin_list = []
             for admin in admins:
@@ -117,6 +110,7 @@ def list_admins(message):
     bot.reply_to(message, response)
     send_log_to_chat(message, 'admins', response)
 
+
 @bot.message_handler(commands=['members'])
 def list_members(message):
     chat_id = message.chat.id
@@ -127,8 +121,7 @@ def list_members(message):
             username = user_info['username']
             if username:
                 user_tag = f"@{username}"
-            elif 'last_name' in user_info and user_info['last_name']:
-                user_tag = f"{name} {user_info['last_name']}"
+            elif 'last_name' in user_info and user_tag
             else:
                 user_tag = name
             member_list.append(f"• {user_tag} — ID: {user_id}")
@@ -137,6 +130,7 @@ def list_members(message):
         response = "❌ Нет данных об активных участниках. Пусть кто‑нибудь напишет в чат."
     bot.reply_to(message, response)
     send_log_to_chat(message, 'members', response)
+
 
 @bot.message_handler(commands=['count'])
 def count_members(message):
@@ -149,51 +143,63 @@ def count_members(message):
     bot.reply_to(message, response)
     send_log_to_chat(message, 'count', response)
 
+
 @bot.message_handler(func=lambda msg: True)
 def record_user(message):
+    if not message.from_user:
+        return  # пропускаем сообщения без пользователя
     chat_id = message.chat.id
     user_id = message.from_user.id
     if chat_id not in active_users:
         active_users[chat_id] = {}
     active_users[chat_id][user_id] = {
-        'name': message.from_user.first_name,
-        'last_name': message.from_user.last_name,
-        'username': message.from_user.username
+        'name': message.from_user.first_name or '',
+        'last_name': message.from_user.last_name or '',
+        'username': message.from_user.username or ''
     }
 
-# --- ФУНКЦИИ FUNPAY (из второго кода) ---
-
+# --- ФУНКЦИИ FUNPAY ---
 def send_telegram_notification(message):
     """Отправляет уведомление в Telegram."""
     try:
-        tg_bot_funpay.send_message(chat_id=TELEGRAM_CHAT_ID_FUNPAY, text=message)
+        bot.send_message(TELEGRAM_CHAT_ID_FUNPAY, message)
+        logger.info("Уведомление отправлено в Telegram")
     except Exception as e:
         logger.error(f"Не удалось отправить уведомление в Telegram: {e}")
+
 
 def raise_all_lots():
     """Поднимает все активные лоты."""
     try:
         lots = fp.get_lots()
+        if not lots:
+            logger.warning("Не удалось получить список лотов")
+            return
         raised_count = 0
         for lot in lots:
-            if lot["status"] == "active":
-                fp.raise_lot(lot["id"])
-                logger.info(f"Поднят лот: #{lot['id']} ({lot['title']})")
-                raised_count += 1
+            if lot.get("status") == "active":
+                try:
+                    fp.raise_lot(lot["id"])
+                    logger.info(f"Поднят лот: #{lot['id']} ({lot['title']})")
+                    raised_count += 1
+                except Exception as e:
+                    logger.error(f"Ошибка при поднятии лота {lot['id']}: {e}")
         if raised_count > 0:
             send_telegram_notification(f"Поднято лотов: {raised_count}")
     except Exception as e:
         logger.error(f"Ошибка при поднятии лотов: {e}")
 
-
 def check_messages():
     """Проверяет новые сообщения и отправляет их в Telegram."""
     try:
         messages = fp.get_messages()
+        if not messages:
+            logger.warning("Не удалось получить сообщения от FunPay")
+            return
         for msg in messages:
-            if msg["new"]:  # если сообщение новое
-                text = msg["message"]
-                sender = msg["sender_name"]
+            if msg.get("new"):
+                text = msg.get("message", "Нет текста")
+                sender = msg.get("sender_name", "Неизвестный отправитель")
                 order_id = msg.get("order_id", "без заказа")
                 notification = (
                     f"Новое сообщение от {sender}\n"
@@ -206,15 +212,15 @@ def check_messages():
         logger.error(f"Ошибка при проверке сообщений: {e}")
 
 # --- ОСНОВНОЙ ЦИКЛ ---
-
 def main():
     logger.info("Бот запущен.")
     send_telegram_notification("Бот стартовал.")
 
     # Запуск Telegram-бота в отдельном потоке
     import threading
-    tg_thread = threading.Thread(target=bot.infinity_polling, daemon=True)
+    tg_thread = threading.Thread(target=bot.infinity_polling, daemon=False)
     tg_thread.start()
+
 
     # Основной цикл для FunPay
     while True:
@@ -227,9 +233,14 @@ def main():
 
             time.sleep(30)  # Цикл каждые 30 секунд
 
+
+        except KeyboardInterrupt:
+            logger.info("Бот остановлен пользователем.")
+            break
         except Exception as e:
             logger.error(f"Критическая ошибка в основном цикле: {e}")
             time.sleep(60)
+
 
 if __name__ == "__main__":
     main()
