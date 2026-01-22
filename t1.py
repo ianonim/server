@@ -11,7 +11,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 # ID чата, куда отправлять логи (группа/канал)
 LOG_CHAT_ID = -1003608057275  # ← замените на ID вашего чата/канала
 
-bot = telebot.TeleBot('7973595298:AAH1CKjhtrlSjSZx-5jNNVGfJK3qRZlpCtU')
+bot = telebot.TeleBot('8058652594:AAHF2FI4zm9T9dvmR4Z2CQ-mbfVRkdHpVSs')
 
 # 1. Полное расписание на день (0=понедельник, ..., 6=воскресенье)
 WEEK_INFO = {
