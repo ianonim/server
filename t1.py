@@ -1,10 +1,17 @@
 import telebot
-from datetime import date, time
-import datetime
+from datetime import date, time, datetime
+import os
+import logging
 
-# Замените на токен вашего бота
-TOKEN = '8058652594:AAHF2FI4zm9T9dvmR4Z2CQ-mbfVRkdHpVSs'
-bot = telebot.TeleBot(TOKEN)
+# Настройка логирования
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+# Получение токена из переменных окружения (безопаснее, чем хранить в коде)
+
+# ID чата, куда отправлять логи (группа/канал)
+LOG_CHAT_ID = -1003608057275  # ← замените на ID вашего чата/канала
+
+bot = telebot.TeleBot('7973595298:AAH1CKjhtrlSjSZx-5jNNVGfJK3qRZlpCtU')
 
 # 1. Полное расписание на день (0=понедельник, ..., 6=воскресенье)
 WEEK_INFO = {
@@ -123,14 +130,17 @@ def get_isoweekday() -> int:
     """Возвращает номер дня недели: 1=понедельник, 7=воскресенье."""
     return date.today().isoweekday()
 
+
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
     bot.reply_to(message, (
-        "Привет! Я бот расписания.\n"
+        "Привет! Я бот расписания и отправки сообщений.\n"
         "Команды:\n"
         "/today — расписание на сегодня\n"
         "/что сейчас — что идёт прямо сейчас\n"
-        "/понедельник … /воскресенье — расписание на конкретный день"
+        "/понедельник … /воскресенье — расписание на конкретный день\n"
+        "/msg <текст> <id_пользователя> — отправить сообщение пользователю\n"
+        "/gmsg <текст> <id_группы> — отправить сообщение в группу"
     ))
 
 @bot.message_handler(commands=['today'])
@@ -139,17 +149,19 @@ def send_today_info(message):
     info = WEEK_INFO[today_idx]
     bot.send_message(message.chat.id, info)
 
-@bot.message_handler(commands=['сейчас'])
+
+@bot.message_handler(commands=['что сейчас'])
 def send_current_info(message):
-    now = datetime.datetime.now().time()
+    now = datetime.now().time()
     day_idx = get_isoweekday()  # 1–7
 
-    if day_idx == 7:
+    if day_idx == 6:
+        response = "Сегодня суббота — занятий нет."
+    elif day_idx == 7:
         response = "Сегодня воскресенье — занятий нет."
     else:
         schedule = SCHEDULE.get(day_idx, [])
         response = "Нет занятий"
-
 
         for start, end, text in schedule:
             if start <= now <= end:
@@ -163,10 +175,10 @@ def send_current_info(message):
 def send_monday(message):
     bot.send_message(message.chat.id, WEEK_INFO[0])
 
-
 @bot.message_handler(commands=['вторник'])
 def send_tuesday(message):
     bot.send_message(message.chat.id, WEEK_INFO[1])
+
 
 @bot.message_handler(commands=['среда'])
 def send_wednesday(message):
@@ -177,19 +189,96 @@ def send_wednesday(message):
 def send_thursday(message):
     bot.send_message(message.chat.id, WEEK_INFO[3])
 
+
 @bot.message_handler(commands=['пятница'])
 def send_friday(message):
     bot.send_message(message.chat.id, WEEK_INFO[4])
+
 
 @bot.message_handler(commands=['суббота'])
 def send_saturday(message):
     bot.send_message(message.chat.id, WEEK_INFO[5])
 
+
 @bot.message_handler(commands=['воскресенье'])
 def send_sunday(message):
     bot.send_message(message.chat.id, WEEK_INFO[6])
 
+
+# Обработка команд /msg и /gmsg
+@bot.message_handler(func=lambda message: message.text.startswith('/msg') or message.text.startswith('/gmsg'))
+def handle_send_message(message):
+    args = message.text.split()
+    command = args[0].lower()
+
+
+    if len(args) < 3:
+        bot.reply_to(message, "Используйте: /msg <текст> <id_пользователя> или /gmsg <текст> <id_группы>")
+        return
+
+    # Объединяем все слова между командой и ID в единый текст сообщения
+    text_parts = args[1:-1]
+    if not text_parts:
+        bot.reply_to(message, "Текст сообщения не указан!")
+        return
+    text = ' '.join(text_parts)
+    
+    try:
+        chat_id = int(args[-1])
+    except ValueError:
+        bot.reply_to(message, "ID должен быть числом!")
+        return
+
+    try:
+        bot.send_message(chat_id=chat_id, text=text)
+        if command == '/msg':
+            bot.reply_to(message, f"Сообщение отправлено пользователю {chat_id}")
+        else:
+            bot.reply_to(message, f"Сообщение отправлено в группу {chat_id}")
+    except telebot.apihelper.ApiException as e:
+        logging.error(f"Ошибка API при отправке сообщения: {e}")
+        bot.reply_to(message, f"Ошибка при отправке: {e.description}")
+    except Exception as e:
+        logging.error(f"Неожиданная ошибка при отправке сообщения: {e}")
+        bot.reply_to(message, f"Неожиданная ошибка: {e}")
+
+
+# Словарь для хранения данных активных участников
+active_users = {}
+
+
+def get_user_identifier(user):
+    """Формирует читаемый идентификатор: @username или Имя Фамилия"""
+    if user.username:
+        return f"@{user.username}"
+    elif user.last_name:
+        return f"{user.first_name} {user.last_name}"
+    else:
+        return user.first_name
+
+def send_log_to_chat(message, command, response_text):
+    """Отправляет лог в указанный чат (LOG_CHAT_ID)"""
+    user_tag = get_user_identifier(message.from_user)
+    chat_info = f"Исходный чат: {message.chat.type} (ID: {message.chat.id})"
+    if message.chat.title:
+        chat_info += f" — «{message.chat.title}»"
+
+    log_msg = (
+        f"📊 **ЛОГ ВЫПОЛНЕНИЯ КОМАНДЫ**\n\n"
+        f"🔹 Команда: `/{command}`\n"
+        f"🔹 Ответ бота: `{response_text}`\n"
+        f"🔹 Пользователь: {user_tag} (ID: {message.from_user.id})\n"
+        f"{chat_info}\n"
+        f"🔹 Дата: `{message.date}`"
+    )
+    try:
+        bot.send_message(LOG_CHAT_ID, log_msg, parse_mode='Markdown')
+    except Exception as e:
+        print(f"[ОШИБКА] Не удалось отправить лог: {e}")
 # Запуск бота
 if __name__ == '__main__':
-    print("Бот запущен...")
-    bot.polling(none_stop=True)
+    logging.info("Бот запущен...")
+    try:
+        bot.polling(none_stop=True)
+    except Exception as e:
+        logging.critical(f"Критическая ошибка при работе бота: {e}")
