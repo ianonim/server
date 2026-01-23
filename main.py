@@ -49,7 +49,7 @@ def send_log_to_chat(message, command, response_text):
 
 @bot.message_handler(commands=['start'])
 def start(message):
-    response = 'Привет! я бот созданный @I_am_ripped'
+    response = 'Привет! я бот созданный кем то'
     bot.send_message(message.chat.id, response)
     send_log_to_chat(message, 'start', response)
 
