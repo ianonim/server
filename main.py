@@ -3,9 +3,8 @@ from telebot import types
 from dotenv import load_dotenv
 import os
 
-load_dotenv()  # Загружаем переменные из .env
-# Ваш токен от BotFather
-TOKEN = 'token'
+load_dotenv()
+TOKEN = os.getenv('bothelper')
 
 
 # ID чата, куда отправлять логи (группа/канал)
