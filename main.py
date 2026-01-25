@@ -11,7 +11,7 @@ from typing import Dict, List, Tuple, Optional
 ADMIN_CHAT_ID = -1003608057275  # ID чата для логов
 BOT_USERNAME = 'your_bot_username'
 
-bot = telebot.TeleBot('7973595298:AAHAflMH1S6_t800voc50kUHB4S-enj66pc')
+bot = telebot.TeleBot('7973595298:AAHHIe5IOprKaoC2NOlwSZXueBsD_gERNQU')
 # База данных
 conn = sqlite3.connect('bot_database.db', check_same_thread=False)
 cursor = conn.cursor()
