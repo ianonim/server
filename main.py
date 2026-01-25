@@ -377,10 +377,9 @@ def cmd_stats(message):
     users_data = load_users_data()
     roles_data = load_data()  # Используем тот же файл ролей
 
-
     if user_id not in users_data:
         response = "Вы ещё не отправляли сообщений боту."
-                bot.reply_to(message, response)
+        bot.reply_to(message, response)
         return
 
     # Собираем данные
