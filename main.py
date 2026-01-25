@@ -4,6 +4,7 @@ from dotenv import load_dotenv
 import os
 import json
 import logging
+from datetime import datetime
 
 # Загрузка переменных окружения
 load_dotenv()
@@ -19,13 +20,16 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Путь к файлу с данными ролей
-DATA_FILE = "roles_data.json"
+# Пути к файлам
+DATA_FILE = "roles_data.json"          # Роли и права
+USERS_DATA_FILE = "users_data.json"     # Статистика пользователей
 
-# Словарь для хранения активных участников
+# Словарь для хранения активных участников (как раньше)
 active_users = {}
 
 
+
+# --- Функции для работы с данными ---
 
 def load_data():
     """Загрузка данных ролей из файла"""
@@ -35,14 +39,23 @@ def load_data():
     except FileNotFoundError:
         return {"roles": {}, "users": {}}
 
-
-
 def save_data(data):
     """Сохранение данных ролей в файл"""
     with open(DATA_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
+def load_users_data():
+    """Загрузка статистики пользователей"""
+    try:
+        with open(USERS_DATA_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return {}
 
+def save_users_data(data):
+    """Сохранение статистики пользователей"""
+    with open(USERS_DATA_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
 
 def has_permission(user_id, permission):
     """Проверка наличия разрешения у пользователя"""
@@ -54,7 +67,6 @@ def has_permission(user_id, permission):
     return "*" in permissions or permission in permissions
 
 
-
 def get_user_identifier(user):
     """Формирует читаемый идентификатор: @username или Имя Фамилия"""
     if user.username:
@@ -63,8 +75,6 @@ def get_user_identifier(user):
         return f"{user.first_name} {user.last_name}"
     else:
         return user.first_name
-
-
 
 def send_log_to_chat(message, command, response_text):
     """Отправляет лог в указанный чат (LOG_CHAT_ID)"""
@@ -87,16 +97,14 @@ def send_log_to_chat(message, command, response_text):
         print(f"[ОШИБКА] Не удалось отправить лог: {e}")
 
 
+# --- Команды с логированием (как раньше) ---
 
-# --- Команды с логированием ---
 
 @bot.message_handler(commands=['start'])
 def start(message):
     response = 'Привет! Я бот, созданный кем‑то.'
     bot.send_message(message.chat.id, response)
     send_log_to_chat(message, 'start', response)
-
-
 
 @bot.message_handler(commands=['help'])
 def help(message):
@@ -132,7 +140,6 @@ def list_admins(message):
             response = "❌ В чате нет администраторов."
     except Exception as e:
         response = f"❌ Ошибка при получении списка админов: {e}"
-    
     bot.reply_to(message, response)
     send_log_to_chat(message, 'admins', response)
 
@@ -168,8 +175,8 @@ def count_members(message):
     bot.reply_to(message, response)
     send_log_to_chat(message, 'count', response)
 
+# --- Система ролей (как раньше) ---
 
-# --- Команды системы ролей ---
 
 @bot.message_handler(commands=['roles'])
 def cmd_roles(message):
@@ -182,6 +189,7 @@ def cmd_roles(message):
     bot.reply_to(message, response)
     send_log_to_chat(message, 'roles', response)
 
+
 @bot.message_handler(commands=['myrole'])
 def cmd_myrole(message):
     user_id = str(message.from_user.id)
@@ -191,11 +199,11 @@ def cmd_myrole(message):
     bot.reply_to(message, response)
     send_log_to_chat(message, 'myrole', response)
 
-@bot.message_handler(commands=['grant'])
+@bot.message_handler(commands=['setrole'])
 def cmd_grant(message):
     args = message.text.split()[1:]  # Получаем аргументы после команды
     if len(args) != 2:
-        response = "Используйте: /grant <user_id> <role>"
+        response = "Используйте: /setrole <user_id> <role>"
         bot.reply_to(message, response)
         send_log_to_chat(message, 'grant', response)
         return
@@ -224,11 +232,11 @@ def cmd_grant(message):
     send_log_to_chat(message, 'grant', response)
 
 
-@bot.message_handler(commands=['revoke'])
+@bot.message_handler(commands=['rr'])
 def cmd_revoke(message):
     args = message.text.split()[1:]
     if len(args) != 1:
-        response = "Используйте: /revoke <user_id>"
+        response = "Используйте: /rr <user_id>"
         bot.reply_to(message, response)
         send_log_to_chat(message, 'revoke', response)
         return
@@ -267,11 +275,13 @@ def cmd_addrole(message):
     permissions = args[1].split(",") if len(args) > 1 else []
     data = load_data()
 
+
     if not has_permission(message.from_user.id, "manage_roles"):
         response = "У вас нет прав для этой команды."
         bot.reply_to(message, response)
         send_log_to_chat(message, 'addrole', response)
         return
+
 
     data["roles"][role_name] = {"permissions": permissions}
     save_data(data)
@@ -288,7 +298,6 @@ def cmd_delrole(message):
         bot.reply_to(message, response)
         send_log_to_chat(message, 'delrole', response)
         return
-
 
     role_name = args[0]
     data = load_data()
@@ -353,26 +362,91 @@ def cmd_perm(message):
     else:
         response = "Действие должно быть 'add' или 'remove'."
 
+
     save_data(data)
     bot.reply_to(message, response)
     send_log_to_chat(message, 'perm', response)
 
 
-# Обработчик всех остальных сообщений — фиксирует активных пользователей
-@bot.message_handler(func=lambda msg: True)
-def record_user(message):
-    chat_id = message.chat.id
-    user_id = message.from_user.id
+# --- Команда /stats ---
 
+@bot.message_handler(commands=['stats'])
+def cmd_stats(message):
+    user = message.from_user
+    user_id = str(user.id)
+    users_data = load_users_data()
+    roles_data = load_data()  # Используем тот же файл ролей
+
+
+    if user_id not in users_data:
+        response = "Вы ещё не отправляли сообщений боту."
+                bot.reply_to(message, response)
+        return
+
+    # Собираем данные
+    data = users_data[user_id]
+    role = roles_data["users"].get(user_id, "нет роли")
+    
+    first_name = data["first_name"] or ""
+    last_name = data["last_name"] or ""
+    username = data["username"]
+    message_count = data["message_count"]
+    first_seen = datetime.fromisoformat(data["first_seen"]).strftime("%d.%m.%Y %H:%M")
+
+    # Формируем ник
+    if username:
+        nick = f"@{username}"
+    elif last_name:
+        nick = f"{first_name} {last_name}"
+    else:
+        nick = first_name
+
+    # Текст ответа
+    response = (
+        f"📊 **Ваша статистика**\n\n"
+        f"🔹 Ник: {nick}\n"
+        f"🔹 Роль: {role}\n"
+        f"🔹 Сообщений всего: {message_count}\n"
+        f"🔹 Первый контакт с ботом: {first_seen}"
+    )
+    bot.reply_to(message, response, parse_mode='Markdown')
+    send_log_to_chat(message, 'stats', response)
+
+# --- Обработчик всех остальных сообщений — фиксирует статистику ---
+
+
+@bot.message_handler(func=lambda msg: True)
+def record_message(message):
+    user = message.from_user
+    user_id = str(user.id)
+    users_data = load_users_data()
+
+    if user_id not in users_data:
+        users_data[user_id] = {
+            "first_name": user.first_name,
+            "last_name": user.last_name,
+            "username": user.username,
+            "message_count": 0,
+            "first_seen": datetime.now().isoformat()
+        }
+
+    users_data[user_id]["message_count"] += 1
+    save_users_data(users_data)
+
+
+    # Дополнительно обновляем active_users (как в исходном коде)
+    chat_id = message.chat.id
     if chat_id not in active_users:
         active_users[chat_id] = {}
-
     active_users[chat_id][user_id] = {
-        'name': message.from_user.first_name,
-        'last_name': message.from_user.last_name,
-        'username': message.from_user.username
+        'name': user.first_name,
+        'last_name': user.last_name,
+        'username': user.username
     }
+
+# --- Запуск бота ---
 
 if __name__ == '__main__':
     print("Бот запущен. Логи отправляются в чат ID:", LOG_CHAT_ID)
     bot.infinity_polling()
+
