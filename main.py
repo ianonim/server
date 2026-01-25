@@ -7,12 +7,11 @@ from dotenv import load_dotenv
 from typing import Dict, List, Tuple, Optional
 
 # Конфигурация
-TOKEN = 'bothelper'
+
 ADMIN_CHAT_ID = -1003608057275  # ID чата для логов
 BOT_USERNAME = 'your_bot_username'
 
-bot = telebot.TeleBot(TOKEN)
-
+bot = telebot.TeleBot('7973595298:AAHAflMH1S6_t800voc50kUHB4S-enj66pc')
 # База данных
 conn = sqlite3.connect('bot_database.db', check_same_thread=False)
 cursor = conn.cursor()
