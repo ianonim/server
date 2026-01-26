@@ -1,0 +1,10 @@
+{
+  "users": {
+    "7614638047": "admin"
+  },
+  "roles": {
+    "admin": {
+      "permissions": ["manage_roles", "grant_role", "*"]
+    }
+  }
+}
