@@ -6,158 +6,331 @@ import sqlite3
 import sys
 import time
 import os
+import requests
+import signal
+import atexit
+import threading
 from typing import Dict, List, Tuple, Optional
 
-# Проверка токена
-def check_token_validity(token: str) -> bool:
-    """Проверка валидности токена бота"""
-    if not token or token == 'YOUR_BOT_TOKEN':
-        print("❌ Ошибка: Токен не установлен. Замените 'YOUR_BOT_TOKEN' на ваш токен от @BotFather")
+# ==================== ПРОВЕРКА ТОКЕНА ====================
+def validate_bot_token(token: str) -> bool:
+    """Тщательная проверка токена бота"""
+    if not token or token.strip() == '' or token == '7973595298:AAGLI_WkT6Okh2xzVamG3tNCRn0zMalUaUg':
+        print("❌ Ошибка: Токен не установлен.")
+        print("   Получите токен у @BotFather и установите его:")
+        print("   Способ 1: В коде: TOKEN = 'ваш_токен'")
+        print("   Способ 2: Через переменную: export BOT_TOKEN='ваш_токен'")
         return False
     
-    # Проверка формата токена
+    # Проверка формата токена (1234567890:ABCdefGhIJKlmNoPQRsTUVwxyZ)
+    if ':' not in token:
+        print("❌ Ошибка: Неверный формат токена.")
+        print("   Токен должен содержать ':' (например: 1234567890:ABCdefGhIJKlmNoPQRsTUVwxyZ)")
+        return False
+    
     parts = token.split(':')
     if len(parts) != 2:
-        print("❌ Ошибка: Неверный формат токена. Токен должен быть в формате '123456789:ABCdefGhIJKlmNoPQRsTUVwxyZ'")
+        print("❌ Ошибка: Неверный формат токена.")
         return False
     
+    # Проверяем, что первая часть - число
     try:
-        # Попытка получить информацию о боте для проверки токена
-        import requests
-        response = requests.get(f'https://api.telegram.org/bot{token}/getMe')
+        int(parts[0])
+    except ValueError:
+        print("❌ Ошибка: Первая часть токена должна быть числом (bot ID).")
+        return False
+    
+    # Проверяем через API
+    try:
+        print("🔍 Проверяем токен через API Telegram...")
+        url = f"https://api.telegram.org/bot{token}/getMe"
+        response = requests.get(url, timeout=10)
+        
         if response.status_code == 200:
             data = response.json()
             if data.get('ok'):
-                print(f"✅ Токен валиден. Бот: @{data['result']['username']}")
+                bot_info = data['result']
+                print(f"✅ Токен валиден!")
+                print(f"   🤖 Бот: @{bot_info['username']}")
+                print(f"   📛 Имя: {bot_info['first_name']}")
+                print(f"   🆔 ID: {bot_info['id']}")
                 return True
             else:
-                print(f"❌ Ошибка API: {data.get('description', 'Unknown error')}")
+                print(f"❌ API вернуло ошибку: {data.get('description')}")
                 return False
-        else:
-            print(f"❌ Ошибка сети: {response.status_code}")
+        elif response.status_code == 401:
+            print("❌ Неверный токен (401 Unauthorized)")
+            print("   Проверьте, что токен правильный и не был отозван")
             return False
+        else:
+            print(f"❌ Ошибка HTTP {response.status_code}")
+            return False
+    except requests.exceptions.Timeout:
+        print("❌ Таймаут при проверке токена")
+        return False
+    except requests.exceptions.ConnectionError:
+        print("❌ Ошибка подключения к серверу Telegram")
+        return False
     except Exception as e:
-        print(f"❌ Ошибка при проверке токена: {str(e)}")
+        print(f"❌ Неизвестная ошибка: {str(e)}")
         return False
 
-# Конфигурация
-TOKEN = os.getenv('7973595298:AAGLI_WkT6Okh2xzVamG3tNCRn0zMalUaUg', '7973595298:AAGLI_WkT6Okh2xzVamG3tNCRn0zMalUaUg')
-ADMIN_CHAT_ID = --1003608057275  # ID чата для логов
-BOT_USERNAME = '@Tresonline_bot'
+# ==================== ОЧИСТКА PENDING UPDATES ====================
+def clear_pending_updates(token: str) -> bool:
+    """Полная очистка pending updates для предотвращения конфликта 409"""
+    print("🧹 Очищаем pending updates...")
+    
+    try:
+        # Метод 1: Получаем последний update_id
+        url = f"https://api.telegram.org/bot{token}/getUpdates?offset=-1&limit=1"
+        response = requests.get(url, timeout=10)
+        
+        if response.status_code == 200:
+            data = response.json()
+            if data.get('ok') and data.get('result'):
+                last_update_id = data['result'][0]['update_id']
+                print(f"📝 Последний update_id: {last_update_id}")
+                
+                # Метод 2: Отправляем подтверждение для всех updates
+                confirm_url = f"https://api.telegram.org/bot{token}/getUpdates?offset={last_update_id + 1}"
+                requests.get(confirm_url, timeout=5)
+                
+                # Метод 3: Используем deleteWebhook для уверенности
+                delete_webhook_url = f"https://api.telegram.org/bot{token}/deleteWebhook"
+                requests.get(delete_webhook_url, timeout=5)
+                
+                print("✅ Pending updates очищены")
+                return True
+        
+        print("⚠️ Не удалось получить updates, продолжаем...")
+        return True
+    except Exception as e:
+        print(f"⚠️ Ошибка при очистке updates: {str(e)}")
+        return True
 
-# Проверяем токен перед запуском
-if not check_token_validity(TOKEN):
-    print("\n⚠️  Для продолжения выполните следующие шаги:")
-    print("1. Создайте бота через @BotFather")
-    print("2. Получите токен (формат: 123456789:ABCdefGhIJKlmNoPQRsTUVwxyZ)")
-    print("3. Установите токен одним из способов:")
-    print("   - В коде: замените 'YOUR_BOT_TOKEN' на ваш токен")
-    print("   - Через переменную окружения: export BOT_TOKEN='ваш_токен'")
+# ==================== КОНФИГУРАЦИЯ ====================
+# Сначала пробуем получить токен из переменных окружения, потом из кода
+TOKEN = os.getenv('BOT_TOKEN', '').strip()
+if not TOKEN:
+    TOKEN = 'YOUR_BOT_TOKEN'  # Замените на ваш токен
+
+ADMIN_CHAT_ID = -1001234567890  # ID чата для логов
+BOT_USERNAME = 'your_bot_username'
+
+# Проверяем токен
+print("=" * 60)
+print("🔐 ПРОВЕРКА ТОКЕНА БОТА")
+print("=" * 60)
+
+if not validate_bot_token(TOKEN):
+    print("\n" + "=" * 60)
+    print("🛠️  ИНСТРУКЦИЯ ПО УСТАНОВКЕ ТОКЕНА")
+    print("=" * 60)
+    print("\n1. Откройте Telegram и найдите @BotFather")
+    print("2. Отправьте команду: /newbot")
+    print("3. Придумайте имя бота (например: My Awesome Bot)")
+    print("4. Придумайте username бота (должен заканчиваться на 'bot', например: my_awesome_bot)")
+    print("5. Скопируйте полученный токен (формат: 1234567890:ABCdefGhIJKlmNoPQRsTUVwxyZ)")
+    print("\nУстановите токен одним из способов:")
+    print("\nА) В коде (строка 81):")
+    print("   TOKEN = 'ВАШ_ТОКЕН_ЗДЕСЬ'")
+    print("\nБ) Через терминал (одна сессия):")
+    print("   export BOT_TOKEN='ВАШ_ТОКЕН_ЗДЕСЬ'")
+    print("   python bot.py")
+    print("\nВ) Через терминал (постоянно):")
+    print("   echo 'export BOT_TOKEN=\"ВАШ_ТОКЕН_ЗДЕСЬ\"' >> ~/.bashrc")
+    print("   source ~/.bashrc")
+    print("   python bot.py")
+    print("\nГ) Через .env файл:")
+    print("   Создайте файл .env со строкой:")
+    print("   BOT_TOKEN=ВАШ_ТОКЕН_ЗДЕСЬ")
+    print("\nПосле установки токена перезапустите бота!")
+    print("=" * 60)
     sys.exit(1)
 
-# Инициализация бота с обработкой ошибок
-class SafeBot:
-    def __init__(self, token):
-        self.bot = telebot.TeleBot(token, threaded=True)
-        self.running = False
-        self.last_update_id = 0
-        self.polling_interval = 0.5
-        
-    def start(self):
-        """Безопасный запуск бота с обработкой ошибок"""
-        if self.running:
-            print("⚠️ Бот уже запущен!")
-            return
-        
-        self.running = True
-        print("🤖 Бот запускается...")
-        
-        try:
-            # Получаем информацию о боте
-            bot_info = self.bot.get_me()
-            print(f"✅ Бот @{bot_info.username} успешно запущен!")
-            print(f"🆔 ID бота: {bot_info.id}")
-            print(f"👤 Имя бота: {bot_info.first_name}")
-            
-            # Устанавливаем webhook в None для чистого запуска polling
-            self.bot.remove_webhook()
-            time.sleep(0.1)
-            
-            # Запускаем polling с обработкой ошибок
-            self._start_polling()
-            
-        except Exception as e:
-            print(f"❌ Критическая ошибка при запуске бота: {str(e)}")
-            if "409" in str(e):
-                print("\n⚠️  Ошибка 409: Обнаружено несколько запущенных экземпляров бота")
-                print("   Решения:")
-                print("   1. Убедитесь, что другой экземпляр бота не запущен")
-                print("   2. Подождите 1-2 минуты перед повторным запуском")
-                print("   3. Используйте параметр skip_pending=True при создании бота")
-            self.running = False
-            raise
+# Очищаем pending updates перед запуском
+clear_pending_updates(TOKEN)
+
+# ==================== БЕЗОПАСНЫЙ БОТ ====================
+class ConflictSafeBot:
+    """Бот с защитой от конфликтов 409"""
     
-    def _start_polling(self):
-        """Запуск polling с обработкой ошибок"""
-        print("🔄 Запуск polling...")
+    def __init__(self, token):
+        self.token = token
+        self.bot = None
+        self.running = False
+        self.retry_count = 0
+        self.max_retries = 3
+        self.polling_thread = None
         
+    def initialize_bot(self):
+        """Инициализация бота с обработкой исключений"""
         try:
-            # Пробуем использовать skip_pending для игнорирования старых updates
-            self.bot.polling(none_stop=True, interval=self.polling_interval, timeout=20)
+            print("🤖 Инициализируем бота...")
+            
+            # Создаем бота с увеличенным timeout
+            self.bot = telebot.TeleBot(
+                self.token,
+                threaded=True,
+                num_threads=2,
+                skip_pending=True  # Важно для предотвращения 409!
+            )
+            
+            # Тестируем подключение
+            bot_info = self.bot.get_me()
+            print(f"✅ Бот инициализирован: @{bot_info.username}")
+            return True
+            
         except telebot.apihelper.ApiTelegramException as e:
             if "409" in str(e):
-                print("\n⚠️  Ошибка 409: Конфликт polling запросов")
-                print("   Пробуем перезапустить с новым offset...")
-                self._handle_conflict()
+                print("⚠️  Конфликт при инициализации. Ожидаем...")
+                time.sleep(2)
+                return False
             else:
+                print(f"❌ Ошибка API: {str(e)}")
                 raise
         except Exception as e:
-            print(f"❌ Ошибка в polling: {str(e)}")
+            print(f"❌ Ошибка при инициализации: {str(e)}")
             raise
     
-    def _handle_conflict(self):
-        """Обработка конфликта 409"""
-        print("⏳ Ожидание 2 секунды...")
-        time.sleep(2)
+    def safe_polling(self):
+        """Безопасный polling с обработкой конфликтов"""
+        while self.running and self.retry_count < self.max_retries:
+            try:
+                print(f"🔄 Запуск polling (попытка {self.retry_count + 1}/{self.max_retries})...")
+                
+                # Удаляем webhook на всякий случай
+                self.bot.remove_webhook()
+                time.sleep(0.5)
+                
+                # Запускаем polling с параметрами для предотвращения 409
+                self.bot.polling(
+                    none_stop=True,
+                    interval=0.5,
+                    timeout=30,
+                    long_polling_timeout=30,
+                    skip_pending=True  # Ключевой параметр!
+                )
+                
+                # Если polling завершился без ошибок, выходим
+                break
+                
+            except telebot.apihelper.ApiTelegramException as e:
+                self.retry_count += 1
+                
+                if "409" in str(e):
+                    print(f"⚠️  Конфликт 409 (попытка {self.retry_count}/{self.max_retries})")
+                    print("   Возможные причины:")
+                    print("   1. Другой экземпляр бота запущен")
+                    print("   2. Старые updates не очищены")
+                    print("   3. Webhook не удален")
+                    
+                    # Очищаем updates через API
+                    clear_pending_updates(self.token)
+                    
+                    # Увеличиваем время ожидания с каждой попыткой
+                    wait_time = self.retry_count * 3
+                    print(f"   ⏳ Ожидаем {wait_time} секунд...")
+                    time.sleep(wait_time)
+                    
+                    if self.retry_count >= self.max_retries:
+                        print("❌ Достигнут лимит попыток. Завершаем работу.")
+                        self.running = False
+                        break
+                        
+                else:
+                    print(f"❌ Ошибка API: {str(e)}")
+                    raise
+                    
+            except Exception as e:
+                print(f"❌ Неизвестная ошибка: {str(e)}")
+                self.running = False
+                break
+    
+    def start(self):
+        """Запуск бота"""
+        if self.running:
+            print("⚠️ Бот уже запущен")
+            return
         
+        print("=" * 60)
+        print("🚀 ЗАПУСК БОТА")
+        print("=" * 60)
+        
+        # Инициализируем бота
+        for attempt in range(3):
+            if self.initialize_bot():
+                break
+            if attempt == 2:
+                print("❌ Не удалось инициализировать бота после 3 попыток")
+                return
+        
+        self.running = True
+        
+        # Запускаем polling в отдельном потоке
+        self.polling_thread = threading.Thread(target=self.safe_polling, daemon=True)
+        self.polling_thread.start()
+        
+        print("✅ Бот запущен в фоновом режиме")
+        print("📡 Ожидаем сообщения...")
+        
+        # Держим основной поток активным
         try:
-            # Пытаемся получить последние updates для правильного offset
-            updates = self.bot.get_updates(offset=-1, timeout=10)
-            if updates:
-                self.last_update_id = updates[-1].update_id
-                print(f"📝 Установлен последний update_id: {self.last_update_id}")
-            
-            # Перезапускаем polling с skip_pending
-            print("🔄 Перезапуск polling...")
-            self.bot.polling(
-                none_stop=True, 
-                interval=self.polling_interval, 
-                timeout=20,
-                skip_pending=True  # Игнорируем pending updates
-            )
-        except Exception as e:
-            print(f"❌ Ошибка при перезапуске: {str(e)}")
-            raise
+            while self.running and self.polling_thread.is_alive():
+                time.sleep(1)
+        except KeyboardInterrupt:
+            print("\n🛑 Получен сигнал прерывания")
+            self.stop()
+    
+    def stop(self):
+        """Остановка бота"""
+        print("\n🛑 Останавливаем бота...")
+        self.running = False
+        
+        if self.bot:
+            try:
+                self.bot.stop_polling()
+                print("✅ Polling остановлен")
+            except:
+                pass
+        
+        if self.polling_thread and self.polling_thread.is_alive():
+            self.polling_thread.join(timeout=5)
+            print("✅ Поток polling завершен")
+        
+        print("👋 Бот остановлен")
 
 # Создаем экземпляр безопасного бота
-safe_bot = SafeBot(TOKEN)
-bot = safe_bot.bot
+safe_bot = ConflictSafeBot(TOKEN)
 
-# База данных
-conn = sqlite3.connect('bot_database.db', check_same_thread=False)
-cursor = conn.cursor()
+# Получаем объект бота для использования в хендлерах
+try:
+    bot = safe_bot.bot if safe_bot.bot else telebot.TeleBot(TOKEN, skip_pending=True)
+except:
+    print("⚠️ Не удалось создать объект бота")
+    sys.exit(1)
 
-# Создание таблиц (если они еще не созданы)
+# ==================== БАЗА ДАННЫХ ====================
 def init_database():
-    """Инициализация базы данных"""
-    tables = [
-        '''CREATE TABLE IF NOT EXISTS chats (
-            chat_id INTEGER PRIMARY KEY,
-            settings TEXT,
-            created_at TIMESTAMP
-        )''',
+    """Инициализация базы данных с обработкой ошибок"""
+    print("🗄️  Инициализируем базу данных...")
+    
+    try:
+        conn = sqlite3.connect('bot_database.db', check_same_thread=False)
+        cursor = conn.cursor()
         
-        '''CREATE TABLE IF NOT EXISTS users (
+        # Таблица чатов
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS chats (
+            chat_id INTEGER PRIMARY KEY,
+            settings TEXT DEFAULT '{}',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        ''')
+        
+        # Таблица пользователей
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS users (
             user_id INTEGER,
             chat_id INTEGER,
             username TEXT,
@@ -165,376 +338,444 @@ def init_database():
             last_name TEXT,
             nick TEXT,
             vip_until TIMESTAMP,
-            join_date TIMESTAMP,
+            join_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             invited_by INTEGER,
             messages_count INTEGER DEFAULT 0,
             warnings INTEGER DEFAULT 0,
             muted_until TIMESTAMP,
+            last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             PRIMARY KEY (user_id, chat_id)
-        )''',
+        )
+        ''')
         
-        '''CREATE TABLE IF NOT EXISTS roles (
+        # Таблица ролей
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS roles (
             chat_id INTEGER,
             role_name TEXT,
             permissions TEXT,
+            created_by INTEGER,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             PRIMARY KEY (chat_id, role_name)
-        )''',
+        )
+        ''')
         
-        '''CREATE TABLE IF NOT EXISTS user_roles (
+        # Таблица связи пользователей и ролей
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS user_roles (
             chat_id INTEGER,
             user_id INTEGER,
             role_name TEXT,
-            PRIMARY KEY (chat_id, user_id)
-        )''',
+            assigned_by INTEGER,
+            assigned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (chat_id, user_id, role_name)
+        )
+        ''')
         
-        '''CREATE TABLE IF NOT EXISTS bans (
+        # Таблица банов
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS bans (
             chat_id INTEGER,
             user_id INTEGER,
             reason TEXT,
             banned_by INTEGER,
-            banned_at TIMESTAMP,
+            banned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            unbanned_at TIMESTAMP,
             PRIMARY KEY (chat_id, user_id)
-        )''',
+        )
+        ''')
         
-        '''CREATE TABLE IF NOT EXISTS reports (
+        # Таблица репортов
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS reports (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             chat_id INTEGER,
             reporter_id INTEGER,
             reported_user_id INTEGER,
             reason TEXT,
             status TEXT DEFAULT 'pending',
-            created_at TIMESTAMP
-        )''',
+            resolved_by INTEGER,
+            resolved_at TIMESTAMP,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        ''')
         
-        '''CREATE TABLE IF NOT EXISTS logs (
+        # Таблица логов
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS logs (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             chat_id INTEGER,
             user_id INTEGER,
             command TEXT,
             details TEXT,
-            timestamp TIMESTAMP
-        )'''
-    ]
-    
-    for table_sql in tables:
-        try:
-            cursor.execute(table_sql)
-        except Exception as e:
-            print(f"❌ Ошибка при создании таблицы: {str(e)}")
-    
-    conn.commit()
-    print("✅ База данных инициализирована")
-
-# Инициализируем БД
-init_database()
-
-# Утилиты (те же функции, что и в предыдущем коде)
-def log_command(chat_id: int, user_id: int, command: str, details: str = ''):
-    """Логирование команд"""
-    cursor.execute(
-        'INSERT INTO logs (chat_id, user_id, command, details, timestamp) VALUES (?, ?, ?, ?, ?)',
-        (chat_id, user_id, command, details, datetime.datetime.now())
-    )
-    
-    # Отправка в лог-чат
-    try:
-        user_info = get_user_info(user_id, chat_id)
-        log_text = (
-            f"📝 Лог команды\n"
-            f"👤 Пользователь: {user_info['first_name']} (@{user_info.get('username', 'N/A')})\n"
-            f"🆔 ID: {user_id}\n"
-            f"💬 Чат: {chat_id}\n"
-            f"📛 Команда: {command}\n"
-            f"📋 Детали: {details}"
+            timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
-        bot.send_message(ADMIN_CHAT_ID, log_text)
-    except Exception as e:
-        print(f"⚠️ Ошибка при отправке лога: {str(e)}")
-    
-    conn.commit()
-
-def get_chat_settings(chat_id: int) -> Dict:
-    """Получение настроек чата"""
-    cursor.execute('SELECT settings FROM chats WHERE chat_id = ?', (chat_id,))
-    result = cursor.fetchone()
-    if result:
-        return json.loads(result[0])
-    return {
-        'warn_limit': 3,
-        'mute_durations': [300, 900, 3600],  # 5 мин, 15 мин, 1 час
-        'vip_days': 30,
-        'report_cooldown': 300,
-        'welcome_message': 'Добро пожаловать в чат!'
-    }
-
-def save_chat_settings(chat_id: int, settings: Dict):
-    """Сохранение настроек чата"""
-    cursor.execute('SELECT chat_id FROM chats WHERE chat_id = ?', (chat_id,))
-    if not cursor.fetchone():
-        cursor.execute(
-            'INSERT INTO chats (chat_id, settings, created_at) VALUES (?, ?, ?)',
-            (chat_id, json.dumps(settings), datetime.datetime.now())
-        )
-    else:
-        cursor.execute(
-            'UPDATE chats SET settings = ? WHERE chat_id = ?',
-            (json.dumps(settings), chat_id)
-        )
-    conn.commit()
-
-def get_user_info(user_id: int, chat_id: int) -> Dict:
-    """Получение информации о пользователе"""
-    cursor.execute(
-        '''SELECT username, first_name, last_name, nick, vip_until, 
-           join_date, invited_by, messages_count, warnings, muted_until 
-           FROM users WHERE user_id = ? AND chat_id = ?''',
-        (user_id, chat_id)
-    )
-    result = cursor.fetchone()
-    if result:
-        return {
-            'username': result[0],
-            'first_name': result[1],
-            'last_name': result[2],
-            'nick': result[3],
-            'vip_until': result[4],
-            'join_date': result[5],
-            'invited_by': result[6],
-            'messages_count': result[7],
-            'warnings': result[8],
-            'muted_until': result[9]
-        }
-    return {}
-
-def update_user_info(user_id: int, chat_id: int, **kwargs):
-    """Обновление информации о пользователе"""
-    # Проверяем существование записи
-    cursor.execute(
-        'SELECT user_id FROM users WHERE user_id = ? AND chat_id = ?',
-        (user_id, chat_id)
-    )
-    
-    if not cursor.fetchone():
-        # Создаем новую запись
-        cursor.execute(
-            '''INSERT INTO users 
-            (user_id, chat_id, username, first_name, last_name, nick, 
-             vip_until, join_date, invited_by, messages_count, warnings, muted_until) 
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
-            (user_id, chat_id, 
-             kwargs.get('username', ''), 
-             kwargs.get('first_name', ''),
-             kwargs.get('last_name', ''),
-             kwargs.get('nick', None),
-             kwargs.get('vip_until', None),
-             kwargs.get('join_date', datetime.datetime.now()),
-             kwargs.get('invited_by', None),
-             kwargs.get('messages_count', 0),
-             kwargs.get('warnings', 0),
-             kwargs.get('muted_until', None))
-        )
-    else:
-        # Обновляем существующую запись
-        update_fields = []
-        values = []
+        ''')
         
-        for key, value in kwargs.items():
-            if value is not None:
-                update_fields.append(f"{key} = ?")
-                values.append(value)
-        
-        if update_fields:
-            values.extend([user_id, chat_id])
-            cursor.execute(
-                f'UPDATE users SET {", ".join(update_fields)} WHERE user_id = ? AND chat_id = ?',
-                values
-            )
-    
-    conn.commit()
-
-def has_permission(chat_id: int, user_id: int, permission: str) -> bool:
-    """Проверка прав пользователя"""
-    # Получаем роли пользователя
-    cursor.execute(
-        'SELECT role_name FROM user_roles WHERE chat_id = ? AND user_id = ?',
-        (chat_id, user_id)
-    )
-    user_roles = cursor.fetchall()
-    
-    # Проверяем права для каждой роли
-    for role_tuple in user_roles:
-        role_name = role_tuple[0]
-        cursor.execute(
-            'SELECT permissions FROM roles WHERE chat_id = ? AND role_name = ?',
-            (chat_id, role_name)
+        # Таблица мутов
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS mutes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            chat_id INTEGER,
+            user_id INTEGER,
+            muted_by INTEGER,
+            reason TEXT,
+            duration_minutes INTEGER,
+            muted_until TIMESTAMP,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            unmuted_at TIMESTAMP
         )
-        result = cursor.fetchone()
-        if result:
-            permissions = json.loads(result[0])
-            if permission in permissions and permissions[permission]:
-                return True
-    
-    return False
-
-def is_admin(chat_id: int, user_id: int) -> bool:
-    """Проверка, является ли пользователь администратором"""
-    try:
-        member = bot.get_chat_member(chat_id, user_id)
-        return member.status in ['administrator', 'creator']
-    except Exception as e:
-        print(f"⚠️ Ошибка при проверке админа: {str(e)}")
-        return False
-
-# Система ролей (команды остаются те же, но с обработкой ошибок)
-@bot.message_handler(commands=['addrole'])
-def add_role(message):
-    """Добавление роли"""
-    try:
-        chat_id = message.chat.id
-        user_id = message.from_user.id
+        ''')
         
-        if not is_admin(chat_id, user_id):
-            bot.reply_to(message, "❌ Только администраторы могут создавать роли!")
-            return
-        
-        try:
-            _, role_name, *permissions = message.text.split()
-            
-            # Создаем словарь разрешений
-            perm_dict = {}
-            for perm in permissions:
-                if '=' in perm:
-                    key, value = perm.split('=')
-                    perm_dict[key] = value.lower() == 'true'
-            
-            cursor.execute(
-                'INSERT OR REPLACE INTO roles (chat_id, role_name, permissions) VALUES (?, ?, ?)',
-                (chat_id, role_name, json.dumps(perm_dict))
-            )
-            conn.commit()
-            
-            bot.reply_to(message, f"✅ Роль '{role_name}' создана!")
-            log_command(chat_id, user_id, '/addrole', f"Роль: {role_name}")
-        except ValueError:
-            bot.reply_to(message, "❌ Использование: /addrole [название] [perm1=true/false] [perm2=true/false]")
-        except Exception as e:
-            bot.reply_to(message, f"❌ Ошибка: {str(e)}")
-    except Exception as e:
-        print(f"⚠️ Ошибка в add_role: {str(e)}")
-
-# ... остальные функции команд остаются такими же как в предыдущем коде ...
-# (warn_user, kick_user, ban_user, report_user, set_vip, set_nick, show_stats, mute_user, etc.)
-
-# Для экономии места, остальные функции команд остаются без изменений
-# Вы можете скопировать их из предыдущего кода
-
-# Команда для проверки статуса бота
-@bot.message_handler(commands=['status'])
-def bot_status(message):
-    """Проверка статуса бота"""
-    try:
-        status_text = (
-            f"🤖 *Статус бота*\n"
-            f"✅ Бот работает\n"
-            f"📊 Всего чатов в БД: {cursor.execute('SELECT COUNT(*) FROM chats').fetchone()[0]}\n"
-            f"👤 Всего пользователей: {cursor.execute('SELECT COUNT(*) FROM users').fetchone()[0]}\n"
-            f"🕒 Время сервера: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
-        )
-        bot.reply_to(message, status_text, parse_mode='Markdown')
-    except Exception as e:
-        bot.reply_to(message, f"❌ Ошибка: {str(e)}")
-
-# Команда для очистки старых логов
-@bot.message_handler(commands=['clearlogs'])
-def clear_old_logs(message):
-    """Очистка старых логов (только для админов)"""
-    chat_id = message.chat.id
-    user_id = message.from_user.id
-    
-    if not is_admin(chat_id, user_id):
-        bot.reply_to(message, "❌ Только администраторы могут очищать логи!")
-        return
-    
-    try:
-        # Удаляем логи старше 30 дней
-        cutoff_date = datetime.datetime.now() - datetime.timedelta(days=30)
-        cursor.execute(
-            'DELETE FROM logs WHERE timestamp < ?',
-            (cutoff_date,)
-        )
-        deleted_count = cursor.rowcount
         conn.commit()
+        print("✅ База данных инициализирована")
         
-        bot.reply_to(message, f"✅ Удалено {deleted_count} старых логов")
-        log_command(chat_id, user_id, '/clearlogs', f"Удалено: {deleted_count}")
+        return conn, cursor
+        
     except Exception as e:
-        bot.reply_to(message, f"❌ Ошибка: {str(e)}")
-
-# Обработчик ошибок для всех команд
-def safe_command_handler(func):
-    """Декоратор для безопасной обработки команд"""
-    def wrapper(message):
-        try:
-            return func(message)
-        except Exception as e:
-            print(f"⚠️ Ошибка в команде {func.__name__}: {str(e)}")
-            try:
-                bot.reply_to(message, "❌ Произошла ошибка при выполнении команды")
-            except:
-                pass
-    return wrapper
-
-# Применяем декоратор ко всем командам
-for handler in bot.message_handlers:
-    handler['function'] = safe_command_handler(handler['function'])
-
-# Функция для плавной остановки бота
-import signal
-import atexit
-
-def shutdown_handler(signum=None, frame=None):
-    """Обработчик завершения работы"""
-    print("\n🛑 Завершение работы бота...")
-    
-    # Закрываем соединение с БД
-    conn.close()
-    print("✅ Соединение с БД закрыто")
-    
-    # Останавливаем polling
-    safe_bot.running = False
-    bot.stop_polling()
-    
-    print("✅ Бот остановлен")
-    sys.exit(0)
-
-# Регистрируем обработчики завершения
-signal.signal(signal.SIGINT, shutdown_handler)
-signal.signal(signal.SIGTERM, shutdown_handler)
-atexit.register(shutdown_handler)
-
-# Основная функция запуска
-def main():
-    """Основная функция запуска бота"""
-    print("=" * 50)
-    print("🤖 Telegram Bot Management System")
-    print("=" * 50)
-    
-    try:
-        # Запускаем безопасный бот
-        safe_bot.start()
-    except KeyboardInterrupt:
-        print("\n\n👋 Завершение работы по запросу пользователя")
-        shutdown_handler()
-    except Exception as e:
-        print(f"\n❌ Критическая ошибка: {str(e)}")
-        print("\n🔧 Возможные решения:")
-        print("1. Проверьте токен бота")
-        print("2. Убедитесь, что бот не запущен в другом месте")
-        print("3. Проверьте подключение к интернету")
-        print("4. Очистите pending updates командой: ")
-        print("   curl -X POST https://api.telegram.org/bot{YOUR_TOKEN}/getUpdates?offset=-1")
+        print(f"❌ Ошибка при инициализации БД: {str(e)}")
         sys.exit(1)
 
-# Запуск
+# Инициализируем БД
+conn, cursor = init_database()
+
+# ==================== УТИЛИТЫ ====================
+def log_command(chat_id: int, user_id: int, command: str, details: str = ''):
+    """Логирование команд"""
+    try:
+        cursor.execute(
+            '''INSERT INTO logs (chat_id, user_id, command, details) 
+               VALUES (?, ?, ?, ?)''',
+            (chat_id, user_id, command, details)
+        )
+        conn.commit()
+        
+        # Отправляем в лог-чат
+        try:
+            log_message = (
+                f"📝 Лог команды\n"
+                f"👤 Пользователь: {user_id}\n"
+                f"💬 Чат: {chat_id}\n"
+                f"📛 Команда: {command}\n"
+                f"📋 Детали: {details}\n"
+                f"🕒 Время: {datetime.datetime.now().strftime('%H:%M:%S')}"
+            )
+            bot.send_message(ADMIN_CHAT_ID, log_message)
+        except:
+            pass
+            
+    except Exception as e:
+        print(f"⚠️ Ошибка при логировании: {str(e)}")
+
+def get_user_display(user_id: int, chat_id: int) -> str:
+    """Получение отображаемого имени пользователя"""
+    try:
+        cursor.execute(
+            '''SELECT first_name, username, nick FROM users 
+               WHERE user_id = ? AND chat_id = ?''',
+            (user_id, chat_id)
+        )
+        result = cursor.fetchone()
+        
+        if result:
+            first_name, username, nick = result
+            if nick:
+                return f"{nick} (@{username})" if username else nick
+            elif username:
+                return f"{first_name} (@{username})"
+            else:
+                return first_name
+                
+        return f"User{user_id}"
+    except:
+        return f"User{user_id}"
+
+def is_user_admin(chat_id: int, user_id: int) -> bool:
+    """Проверка, является ли пользователь администратором"""
+    try:
+        chat_member = bot.get_chat_member(chat_id, user_id)
+        return chat_member.status in ['administrator', 'creator']
+    except:
+        return False
+
+# ==================== ОСНОВНЫЕ КОМАНДЫ ====================
+@bot.message_handler(commands=['start', 'help'])
+def send_welcome(message):
+    """Приветственное сообщение"""
+    help_text = """
+🤖 *Добро пожаловать в бота управления чатом!*
+
+*Основные команды:*
+
+👮‍♂️ *Административные:*
+• /warn [причина] - Выдать предупреждение (ответом на сообщение)
+• /kick [причина] - Кикнуть пользователя
+• /ban [причина] - Забанить пользователя
+• /unban [user_id] - Разбанить
+• /mute [время] [причина] - Мут пользователя
+• /unmute [user_id] - Размутить
+
+📊 *Информационные:*
+• /stats - Ваша статистика
+• /chatstats - Статистика чата
+• /online - Кто онлайн
+• /top - Топ активных пользователей
+
+👤 *Пользовательские:*
+• /report [причина] - Пожаловаться (ответом на сообщение)
+• /setnick [ник] - Установить свой ник
+• /me - Информация о себе
+• /id - Получить свой ID
+
+⚙️ *Настройки:*
+• /settings - Настройки чата
+• /roles - Управление ролями
+• /vip - Управление VIP статусами
+
+*Примеры:*
+• Ответьте на сообщение `/warn спам`
+• `/mute 60 Спам` - Мут на 60 минут
+• `/report оскорбления` - Ответом на сообщение
+"""
+    
+    try:
+        bot.reply_to(message, help_text, parse_mode='Markdown')
+    except:
+        pass
+
+@bot.message_handler(commands=['warn'])
+def warn_user(message):
+    """Выдать предупреждение"""
+    if not message.reply_to_message:
+        bot.reply_to(message, "❌ Ответьте на сообщение пользователя!")
+        return
+    
+    if not is_user_admin(message.chat.id, message.from_user.id):
+        bot.reply_to(message, "❌ Только администраторы могут выдавать предупреждения!")
+        return
+    
+    target_user = message.reply_to_message.from_user
+    reason = message.text.split(maxsplit=1)[1] if len(message.text.split()) > 1 else "Не указана"
+    
+    try:
+        # Обновляем счетчик предупреждений
+        cursor.execute(
+            '''INSERT INTO users (user_id, chat_id, username, first_name, warnings) 
+               VALUES (?, ?, ?, ?, 1)
+               ON CONFLICT(user_id, chat_id) 
+               DO UPDATE SET warnings = warnings + 1''',
+            (target_user.id, message.chat.id, target_user.username, target_user.first_name)
+        )
+        conn.commit()
+        
+        # Получаем текущее количество варнов
+        cursor.execute(
+            '''SELECT warnings FROM users 
+               WHERE user_id = ? AND chat_id = ?''',
+            (target_user.id, message.chat.id)
+        )
+        warnings = cursor.fetchone()[0]
+        
+        response = (
+            f"⚠️ Пользователю {get_user_display(target_user.id, message.chat.id)} "
+            f"выдано предупреждение!\n"
+            f"📝 Причина: {reason}\n"
+            f"🔢 Всего предупреждений: {warnings}/3"
+        )
+        
+        if warnings >= 3:
+            response += "\n🚫 *Достигнут лимит предупреждений!*"
+        
+        bot.reply_to(message, response, parse_mode='Markdown')
+        log_command(message.chat.id, message.from_user.id, '/warn', 
+                   f"Цель: {target_user.id}, Причина: {reason}")
+        
+    except Exception as e:
+        bot.reply_to(message, f"❌ Ошибка: {str(e)}")
+
+@bot.message_handler(commands=['stats'])
+def show_stats(message):
+    """Показать статистику пользователя"""
+    user_id = message.from_user.id
+    chat_id = message.chat.id
+    
+    try:
+        cursor.execute(
+            '''SELECT messages_count, warnings, join_date, nick 
+               FROM users WHERE user_id = ? AND chat_id = ?''',
+            (user_id, chat_id)
+        )
+        result = cursor.fetchone()
+        
+        if result:
+            messages_count, warnings, join_date, nick = result
+            join_date_str = join_date.split()[0] if join_date else "Неизвестно"
+            
+            stats_text = (
+                f"📊 *Ваша статистика*\n"
+                f"👤 Ник: {nick if nick else 'Не установлен'}\n"
+                f"💬 Сообщений: {messages_count}\n"
+                f"⚠️ Предупреждений: {warnings}/3\n"
+                f"📅 В чате с: {join_date_str}\n"
+                f"🆔 Ваш ID: `{user_id}`"
+            )
+        else:
+            stats_text = "📊 У вас еще нет статистики в этом чате."
+        
+        bot.reply_to(message, stats_text, parse_mode='Markdown')
+        
+    except Exception as e:
+        bot.reply_to(message, f"❌ Ошибка: {str(e)}")
+
+@bot.message_handler(commands=['id'])
+def get_id(message):
+    """Получить ID пользователя"""
+    user_id = message.from_user.id
+    chat_id = message.chat.id
+    
+    try:
+        if message.reply_to_message:
+            target_id = message.reply_to_message.from_user.id
+            bot.reply_to(message, f"🆔 ID пользователя: `{target_id}`", parse_mode='Markdown')
+        else:
+            bot.reply_to(message, f"🆔 Ваш ID: `{user_id}`\n💬 ID чата: `{chat_id}`", 
+                        parse_mode='Markdown')
+    except:
+        pass
+
+@bot.message_handler(commands=['ping'])
+def ping_command(message):
+    """Проверка работоспособности бота"""
+    start_time = time.time()
+    msg = bot.reply_to(message, "🏓 Понг...")
+    end_time = time.time()
+    
+    ping_time = round((end_time - start_time) * 1000, 2)
+    bot.edit_message_text(
+        f"🏓 Понг! Задержка: {ping_time} мс\n"
+        f"🕒 Время сервера: {datetime.datetime.now().strftime('%H:%M:%S')}",
+        chat_id=message.chat.id,
+        message_id=msg.message_id
+    )
+
+# ==================== СИСТЕМА СООБЩЕНИЙ ====================
+@bot.message_handler(func=lambda message: True, content_types=['text'])
+def handle_all_messages(message):
+    """Обработка всех сообщений для подсчета статистики"""
+    try:
+        user_id = message.from_user.id
+        chat_id = message.chat.id
+        
+        # Обновляем статистику
+        cursor.execute(
+            '''INSERT INTO users (user_id, chat_id, username, first_name, messages_count, last_seen) 
+               VALUES (?, ?, ?, ?, 1, CURRENT_TIMESTAMP)
+               ON CONFLICT(user_id, chat_id) 
+               DO UPDATE SET 
+               messages_count = messages_count + 1,
+               last_seen = CURRENT_TIMESTAMP,
+               username = excluded.username,
+               first_name = excluded.first_name''',
+            (user_id, chat_id, message.from_user.username, message.from_user.first_name)
+        )
+        conn.commit()
+        
+    except Exception as e:
+        print(f"⚠️ Ошибка при обработке сообщения: {str(e)}")
+
+# ==================== ОБРАБОТЧИКИ СИГНАЛОВ ====================
+def signal_handler(signum, frame):
+    """Обработчик сигналов завершения"""
+    print(f"\n🛑 Получен сигнал {signum}. Останавливаем бота...")
+    safe_bot.stop()
+    conn.close()
+    sys.exit(0)
+
+# Регистрируем обработчики сигналов
+signal.signal(signal.SIGINT, signal_handler)
+signal.signal(signal.SIGTERM, signal_handler)
+atexit.register(lambda: safe_bot.stop())
+
+# ==================== СКРИПТ АВАРИЙНОЙ ОЧИСТКИ ====================
+def emergency_cleanup():
+    """Аварийная очистка для устранения ошибки 409"""
+    print("\n" + "=" * 60)
+    print("🆘 АВАРИЙНАЯ ОЧИСТКА ДЛЯ УСТРАНЕНИЯ ОШИБКИ 409")
+    print("=" * 60)
+    
+    print("\nВыполняем следующие действия:")
+    print("1. ✅ Проверяем токен...")
+    if not validate_bot_token(TOKEN):
+        return False
+    
+    print("2. 🧹 Очищаем pending updates...")
+    if not clear_pending_updates(TOKEN):
+        print("⚠️ Не удалось очистить updates, продолжаем...")
+    
+    print("3. 🗑️ Удаляем webhook...")
+    try:
+        url = f"https://api.telegram.org/bot{TOKEN}/deleteWebhook"
+        response = requests.get(url, timeout=10)
+        if response.status_code == 200:
+            print("✅ Webhook удален")
+    except:
+        print("⚠️ Не удалось удалить webhook")
+    
+    print("4. 🔄 Устанавливаем offset...")
+    try:
+        url = f"https://api.telegram.org/bot{TOKEN}/getUpdates?offset=-1"
+        requests.get(url, timeout=5)
+        print("✅ Offset установлен")
+    except:
+        pass
+    
+    print("\n" + "=" * 60)
+    print("✅ Аварийная очистка завершена!")
+    print("Теперь можно запустить бота командой:")
+    print(f"python {sys.argv[0]}")
+    print("=" * 60)
+    
+    return True
+
+# ==================== ГЛАВНАЯ ФУНКЦИЯ ====================
+def main():
+    """Главная функция запуска"""
+    print("=" * 60)
+    print("🤖 TELEGRAM BOT MANAGEMENT SYSTEM")
+    print("=" * 60)
+    print(f"Версия: 2.0 (с защитой от ошибки 409)")
+    print(f"Токен: {'*' * 20}{TOKEN[-5:] if len(TOKEN) > 5 else ''}")
+    print(f"Время: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print("=" * 60)
+    
+    # Проверяем аргументы командной строки
+    if len(sys.argv) > 1:
+        if sys.argv[1] == '--clean':
+            emergency_cleanup()
+            return
+        elif sys.argv[1] == '--check':
+            validate_bot_token(TOKEN)
+            return
+        elif sys.argv[1] == '--help':
+            print("\nИспользование:")
+            print(f"  python {sys.argv[0]}           - Запустить бота")
+            print(f"  python {sys.argv[0]} --clean   - Аварийная очистка от ошибки 409")
+            print(f"  python {sys.argv[0]} --check   - Проверить токен")
+            print(f"  python {sys.argv[0]} --help    - Показать эту справку")
+            return
+    
+    # Запускаем бота
+    try:
+        safe_bot.start()
+    except KeyboardInterrupt:
+        print("\n\n👋 Завершение работы...")
+        safe_bot.stop()
+    except Exception as e:
+        print(f"\n❌ Критическая ошибка: {str(e)}")
+        print("\n🆘 Для решения проблемы с ошибкой 409 выполните:")
+        print(f"python {sys.argv[0]} --clean")
+        safe_bot.stop()
+
+# ==================== ЗАПУСК ====================
 if __name__ == '__main__':
     main()
