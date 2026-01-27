@@ -11,11 +11,15 @@ import signal
 import atexit
 import threading
 from typing import Dict, List, Tuple, Optional
+from dotenv import load_dotenv
+
+load_dotenv()
+TOKEN = os.getenv('bothelper')
 
 # ==================== ПРОВЕРКА ТОКЕНА ====================
 def validate_bot_token(token: str) -> bool:
     """Тщательная проверка токена бота"""
-    if not token or token.strip() == '' or token == '7973595298:AAGLI_WkT6Okh2xzVamG3tNCRn0zMalUaUg':
+    if not token or token.strip() == '' or token == 'TOKEN':
         print("❌ Ошибка: Токен не установлен.")
         print("   Получите токен у @BotFather и установите его:")
         print("   Способ 1: В коде: TOKEN = 'ваш_токен'")
