@@ -14,7 +14,7 @@ from typing import Dict, List, Tuple, Optional
 from dotenv import load_dotenv
 
 load_dotenv()
-TOKEN = os.getenv('bothelper')
+TOKEN = os.getenv('7973595298:AAGLI_WkT6Okh2xzVamG3tNCRn0zMalUaUg')
 
 # ==================== ПРОВЕРКА ТОКЕНА ====================
 def validate_bot_token(token: str) -> bool:
